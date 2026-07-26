@@ -43,7 +43,7 @@ bot.onText(/\/start/, (msg) => {
     'Добро пожаловать в ICON 3 — территория красоты 🤍\n\nЗапишем вас онлайн. Выберите услугу:',
     {
       reply_markup: {
-        inline_keyboard: SERVICES.map((s) => [{ text: s, callback_data: `service:${s}` }]),
+        inline_keyboard: SERVICES.map((s, i) => [{ text: s, callback_data: `service:${i}` }]),
       },
     }
   );
@@ -56,7 +56,8 @@ bot.on('callback_query', async (query) => {
   const session = getSession(chatId);
 
   if (data.startsWith('service:')) {
-    session.service = data.replace('service:', '');
+    const index = parseInt(data.replace('service:', ''), 10);
+    session.service = SERVICES[index];
     session.step = 'tier';
     await bot.editMessageText(`Услуга: ${session.service}\n\nВыберите мастера:`, {
       chat_id: chatId,
