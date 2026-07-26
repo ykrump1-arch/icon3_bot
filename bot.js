@@ -291,7 +291,10 @@ bot.on('message', async (msg) => {
   if (session.step === 'name') {
     session.name = msg.text;
     session.step = 'phone';
-    bot.sendMessage(chatId, 'Номер телефона для связи:', {
+    bot.sendMessage(
+      chatId,
+      'Номер телефона для связи:\n\nНапишите его сообщением вручную, либо нажмите кнопку ниже, чтобы отправить свой номер или переслать контакт другого человека.',
+      {
       reply_markup: {
         keyboard: [[{ text: 'Отправить номер 📱', request_contact: true }]],
         resize_keyboard: true,
