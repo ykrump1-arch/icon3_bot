@@ -120,19 +120,23 @@ function releaseSlot(session) {
   if (set) set.delete(session.time);
 }
 
+function serviceKeyboard() {
+  return SERVICES.map((s, i) => [{ text: s, callback_data: `service:${i}` }]);
+}
+
+function sendWelcome(chatId) {
+  bot.sendMessage(
+    chatId,
+    'Добро пожаловать в ICON 3 — территория красоты 🤍\n\nЗапишем вас онлайн. Выберите услугу:',
+    { reply_markup: { inline_keyboard: serviceKeyboard() } }
+  );
+}
+
 // ---- /start ----
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   resetSession(chatId);
-  bot.sendMessage(
-    chatId,
-    'Добро пожаловать в ICON 3 — территория красоты 🤍\n\nЗапишем вас онлайн. Выберите услугу:',
-    {
-      reply_markup: {
-        inline_keyboard: SERVICES.map((s, i) => [{ text: s, callback_data: `service:${i}` }]),
-      },
-    }
-  );
+  sendWelcome(chatId);
 });
 
 // ---- Клавиатура выбора даты ----
@@ -228,7 +232,6 @@ bot.on('callback_query', async (query) => {
       const free = getFreeSlots(session.dateOffset);
 
       if (!free.includes(time)) {
-        // кто-то другой успел занять этот слот раньше — обновляем список
         const { rows, free: freshFree } = buildTimeKeyboard(session.dateOffset);
         await bot.editMessageText(
           `Ой, это время только что заняли 😔\n\nВыберите другое время на ${session.dateLabel}:`,
@@ -242,7 +245,7 @@ bot.on('callback_query', async (query) => {
       }
 
       session.time = time;
-      reserveSlot(session); // сразу резервируем, чтобы никто другой не перехватил, пока клиент вводит данные
+      reserveSlot(session);
       session.step = 'name';
       await bot.editMessageText(
         `Услуга: ${session.service}\nМастер: ${session.tier}\nДата/время: ${session.dateLabel}, ${session.time}\n\nКак к вам обращаться? (напишите имя)`,
@@ -255,12 +258,22 @@ bot.on('callback_query', async (query) => {
         message_id: query.message.message_id,
       });
       sessions.set(chatId, { step: 'idle' }); // слот НЕ освобождаем — запись состоялась
-    } else if (data === 'confirm:restart') {
-      resetSession(chatId); // здесь слот освободится автоматически
-      await bot.editMessageText('Хорошо, начнём заново. Отправьте /start', {
-        chat_id: chatId,
-        message_id: query.message.message_id,
+
+      // Кнопка "записаться ещё раз" — не нужно вручную писать /start
+      await bot.sendMessage(chatId, 'Хотите записаться ещё раз?', {
+        reply_markup: {
+          inline_keyboard: [[{ text: '📅 Записаться ещё раз', callback_data: 'restart_flow' }]],
+        },
       });
+    } else if (data === 'confirm:restart' || data === 'restart_flow') {
+      resetSession(chatId);
+      if (data === 'confirm:restart') {
+        await bot.editMessageText('Хорошо, начнём заново 🤍', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+        });
+      }
+      sendWelcome(chatId);
     }
   } catch (err) {
     console.error('Ошибка в callback_query:', err.message);
@@ -288,36 +301,40 @@ bot.on('message', async (msg) => {
   } else if (session.step === 'phone') {
     session.phone = msg.text;
     session.step = 'confirm';
-    bot.sendMessage(chatId, buildConfirmText(session), {
-      reply_markup: {
-        remove_keyboard: true,
-        inline_keyboard: [
-          [{ text: '✅ Подтвердить', callback_data: 'confirm:yes' }],
-          [{ text: '↩️ Начать заново', callback_data: 'confirm:restart' }],
-        ],
-      },
-    });
+    await sendConfirmStep(chatId, session);
   }
 });
 
 // ---- Контакт, отправленный кнопкой "Отправить номер" ----
-bot.on('contact', (msg) => {
+bot.on('contact', async (msg) => {
   const chatId = msg.chat.id;
   const session = getSession(chatId);
   if (session.step === 'phone') {
     session.phone = msg.contact.phone_number;
     session.step = 'confirm';
-    bot.sendMessage(chatId, buildConfirmText(session), {
-      reply_markup: {
-        remove_keyboard: true,
-        inline_keyboard: [
-          [{ text: '✅ Подтвердить', callback_data: 'confirm:yes' }],
-          [{ text: '↩️ Начать заново', callback_data: 'confirm:restart' }],
-        ],
-      },
-    });
+    await sendConfirmStep(chatId, session);
   }
 });
+
+// Важно: reply-клавиатуру ("Отправить номер") и inline-клавиатуру нельзя убрать/показать
+// одним sendMessage — Telegram применяет только одно из двух. Поэтому убираем reply-клавиатуру
+// отдельным (невидимым) сообщением, а затем показываем подтверждение с inline-кнопками.
+async function sendConfirmStep(chatId, session) {
+  const cleanup = await bot.sendMessage(chatId, '✅ Номер получен', {
+    reply_markup: { remove_keyboard: true },
+  });
+  // удаляем служебное сообщение, чтобы не засорять чат
+  bot.deleteMessage(chatId, cleanup.message_id).catch(() => {});
+
+  await bot.sendMessage(chatId, buildConfirmText(session), {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ Подтвердить', callback_data: 'confirm:yes' }],
+        [{ text: '↩️ Начать заново', callback_data: 'confirm:restart' }],
+      ],
+    },
+  });
+}
 
 function buildConfirmText(session) {
   return (
